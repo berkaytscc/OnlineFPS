@@ -1,8 +1,9 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Photon.Pun;
 
-public class PlayerController : MonoBehaviour
+public class PlayerController : MonoBehaviourPunCallbacks
 {
     public Transform viewPoint;
     public float mouseSensitivity = 1f;
@@ -38,6 +39,8 @@ public class PlayerController : MonoBehaviour
     public Gun[] allGuns;
     private int selectedGun;
 
+    public GameObject playerHitImpact;
+
     // Start is called before the first frame update
     void Start()
     {
@@ -47,11 +50,17 @@ public class PlayerController : MonoBehaviour
         UIController.instance.weaponTempSlider.maxValue = maxHeat;
 
         SwitchGun();
+
+        //Transform newTransfrom = SpawnManager.instance.GetSpawnPoint();
+        //transform.position = newTransfrom.position;
+        //transform.rotation = newTransfrom.rotation;
     }
 
     // Update is called once per frame
     void Update()
     {
+        if (!photonView.IsMine) return;
+
         mouseInput = new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y")) * mouseSensitivity;
         transform.rotation = Quaternion.Euler(transform.rotation.eulerAngles.x, 
                                                transform.rotation.eulerAngles.y + mouseInput.x, 
@@ -94,7 +103,7 @@ public class PlayerController : MonoBehaviour
             movement.y = jumpForce;
         }
 
-        Debug.Log(characterController.isGrounded);
+        //Debug.Log(characterController.isGrounded);
 
         movement.y += Physics.gravity.y * Time.deltaTime * gravityMod;
 
@@ -165,6 +174,14 @@ public class PlayerController : MonoBehaviour
             SwitchGun();
         }
 
+        for(int i = 0; i < allGuns.Length; i++)
+        {
+            if(Input.GetKeyDown((i + 1).ToString()))
+            {
+                selectedGun = i;
+                SwitchGun();
+            }
+        }
 
         if(Input.GetKeyDown(KeyCode.Escape))
         {
@@ -180,8 +197,11 @@ public class PlayerController : MonoBehaviour
     }
     private void LateUpdate()
     {
-        camera.transform.position = viewPoint.position;
-        camera.transform.rotation = viewPoint.rotation;
+        if(photonView.IsMine)
+        {
+            camera.transform.position = viewPoint.position;
+            camera.transform.rotation = viewPoint.rotation;
+        }
     }
 
     private void Shoot()
@@ -191,13 +211,23 @@ public class PlayerController : MonoBehaviour
 
         if(Physics.Raycast(ray,out RaycastHit hit))
         {
-            Debug.Log($"object hit: {hit.collider.gameObject.name}");
+            //Debug.Log($"object hit: {hit.collider.gameObject.name}");
+            if(hit.collider.gameObject.tag == "Player")
+            {
+                Debug.Log("Hit " + hit.collider.gameObject.GetPhotonView().Owner.NickName);
 
-            // multiply hit.normal by 0.002f because it draws the particle effect the position same as the object we hit.
-            GameObject bulletImpactObject = Instantiate(bulletImpact, hit.point + (hit.normal * .002f),
+                PhotonNetwork.Instantiate(playerHitImpact.name, hit.point, Quaternion.identity);
+
+                hit.collider.gameObject.GetPhotonView().RPC("DealDamage",RpcTarget.All, photonView.Owner.NickName);
+            }
+            else
+            {
+                // multiply hit.normal by 0.002f because it draws the particle effect the position same as the object we hit.
+                GameObject bulletImpactObject = Instantiate(bulletImpact, hit.point + (hit.normal * .002f),
                 Quaternion.LookRotation(hit.normal, Vector3.up));
 
-            Destroy(bulletImpactObject, 2f);
+                Destroy(bulletImpactObject, 2f);
+            }
         }
 
         shotCounter = allGuns[selectedGun].timeBetweenShots;
@@ -214,6 +244,21 @@ public class PlayerController : MonoBehaviour
 
         allGuns[selectedGun].muzzleFlash.SetActive(true);
         muzzleCounter = muzzleDisplayTime;
+    }
+
+    [PunRPC]
+    public void DealDamage(string damager)
+    {
+        TakeDamage(damager);
+    }
+
+    public void TakeDamage(string damager)
+    {
+        if (photonView.IsMine)
+        {
+            //Debug.Log(photonView.Owner.NickName + " has been hit by " + damager);
+            PlayerSpawner.instance.Die();
+        }
     }
 
     void SwitchGun()
